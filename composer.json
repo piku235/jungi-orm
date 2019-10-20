@@ -1,0 +1,25 @@
+{
+    "name": "jungi/orm",
+    "description": "High efficient object relational mapper, embeddables, collections and more",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Piotr Kugla",
+            "email": "piku235@gmail.com"
+        }
+    ],
+    "require": {
+        "doctrine/dbal": "^2.9"
+    },
+    "autoload": {
+        "psr-4": {
+            "Jungi\\Orm\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Jungi\\Orm\\Tests\\": "tests/"
+        }
+    }
+}

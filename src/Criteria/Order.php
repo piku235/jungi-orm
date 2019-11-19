@@ -7,8 +7,8 @@ namespace Jungi\Orm\Criteria;
  */
 final class Order
 {
-    public const ASC = 'asc';
-    public const DESC = 'desc';
+    public const ASC = 'ASC';
+    public const DESC = 'DESC';
 
     private $direction;
     private $propertyName;

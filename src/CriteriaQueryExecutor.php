@@ -3,6 +3,7 @@
 namespace Jungi\Orm;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Driver\ResultStatement;
 use Doctrine\DBAL\Query\QueryBuilder as DbalQueryBuilder;
 use Jungi\Orm\Criteria\CriteriaQuery;
 use Jungi\Orm\Criteria\DbalConditionalExpressionVisitor;
@@ -18,7 +19,7 @@ use Jungi\Orm\Mapping\Field;
 /**
  * @author Piotr Kugla <piku235@gmail.com>
  */
-final class DistinctResultSetCriteriaQueryExecutor implements CriteriaQueryExecutorInterface
+final class CriteriaQueryExecutor implements CriteriaQueryExecutorInterface
 {
     private $connection;
     private $classMetadataFactory;
@@ -38,49 +39,88 @@ final class DistinctResultSetCriteriaQueryExecutor implements CriteriaQueryExecu
     {
         $entityMetadata = $query->getQueriedEntity();
         $queryMapping = $this->getEntityQueryMapping($entityMetadata->getClassName());
+        $idColumnName = $this->getEntityIdColumnMapping($entityMetadata, $queryMapping)->getResultName();
+        $collectionProperties = $entityMetadata->getNestedPropertiesOf(CollectionField::class);
 
-        $idFieldMetadata = $entityMetadata->getIdProperty()->getField();
-        $idColumnName = $queryMapping->getColumn($entityMetadata->getTableName(), $idFieldMetadata->getColumnName())->getResultName();
+        if ($collectionProperties->valid()) {
+            $stmt = $this->executeQueryWithCollections($query, $collectionProperties);
+        } else {
+            $stmt = $this->executeQueryFromEntityOnly($query);
+        }
 
-        $qb = $this->createDbalQueryBuilder($query, $queryMapping);
-        $resultSet = new DistinctResultSet($qb->execute(), $idColumnName);
+        $resultSet = new DistinctResultSet($stmt, $idColumnName);
         $resultSetMapper = new DistinctResultSetMapper($this->connection, $entityMetadata, $queryMapping);
 
         return new DistinctEntityResultSet($entityMetadata->getClassName(), $resultSet, $resultSetMapper);
     }
 
-    private function createDbalQueryBuilder(CriteriaQuery $criteriaQuery, QueryMapping $queryMapping): DbalQueryBuilder
+    private function executeQueryFromEntityOnly(CriteriaQuery $query): ResultStatement
     {
-        $entityMetadata = $criteriaQuery->getQueriedEntity();
-        $idFieldMetadata = $entityMetadata->getIdProperty()->getField();
+        $entityMetadata = $query->getQueriedEntity();
+        $queryMapping = $this->getEntityQueryMapping($entityMetadata->getClassName());
         $tableAlias = $queryMapping->getTableAlias($entityMetadata->getTableName());
-        $idColumnName = $queryMapping->getColumn($entityMetadata->getTableName(), $idFieldMetadata->getColumnName())->getQualifiedName();
 
         $qb = $this->connection->createQueryBuilder();
+        $qb->from($entityMetadata->getTableName(), $tableAlias);
 
-        if (null !== $criteriaQuery->getFirstResult() || null !== $criteriaQuery->getMaxResults()) {
+        $this->applySelectColumns($queryMapping, $qb);
+        $this->applyOrderings($qb, $query, $queryMapping);
+
+        if ($query->getConditionalExpression()) {
+            $conditionVisitor = new DbalConditionalExpressionVisitor($qb, $entityMetadata, $queryMapping);
+            $conditionVisitor->visit($query->getConditionalExpression());
+        }
+
+        if (null !== $query->getFirstResult()) {
+            $qb->setFirstResult($query->getFirstResult());
+        }
+        if (null !== $query->getMaxResults()) {
+            $qb->setMaxResults($query->getMaxResults());
+        }
+
+        return $qb->execute();
+    }
+
+    private function executeQueryWithCollections(CriteriaQuery $query, iterable $collectionProperties): ResultStatement
+    {
+        $entityMetadata = $query->getQueriedEntity();
+        $queryMapping = $this->getEntityQueryMapping($entityMetadata->getClassName());
+        $tableAlias = $queryMapping->getTableAlias($entityMetadata->getTableName());
+        $idColumnName = $this->getEntityIdColumnMapping($entityMetadata, $queryMapping)->getQualifiedName();
+
+        $qb = $this->connection->createQueryBuilder();
+        $this->applySelectColumns($queryMapping, $qb);
+
+        // FROM (SELECT * FROM foo [...])
+        if (null !== $query->getFirstResult() || null !== $query->getMaxResults()) {
             $sqb = $this->connection->createQueryBuilder();
             $sqb
                 ->select('*')
-                ->from($entityMetadata->getTableName());
+                ->from($entityMetadata->getTableName(), $tableAlias);
 
-            if (null !== $criteriaQuery->getFirstResult()) {
-                $sqb->setFirstResult($criteriaQuery->getFirstResult());
+            $this->applyOrderings($sqb, $query, $queryMapping);
+
+            // VERY IMPORTANT
+            // without that the DistinctResultSetMapper will not work correctly
+            $sqb->addOrderBy($idColumnName, Order::ASC);
+
+            if (null !== $query->getFirstResult()) {
+                $sqb->setFirstResult($query->getFirstResult());
             }
-            if (null !== $criteriaQuery->getMaxResults()) {
-                $sqb->setMaxResults($criteriaQuery->getMaxResults());
+            if (null !== $query->getMaxResults()) {
+                $sqb->setMaxResults($query->getMaxResults());
             }
 
-            $qb->from('('.$sqb.')', $tableAlias);
-        } else {
+            $qb->from('('.$sqb->getSQL().')', $tableAlias);
+        } else { // FROM foo [...]
             $qb->from($entityMetadata->getTableName(), $tableAlias);
-        }
 
-        foreach ($queryMapping->getColumns() as $column) {
-            $qb->addSelect(sprintf('%s AS %s', $column->getQualifiedName(), $column->getResultName()));
-        }
+            $this->applyOrderings($qb, $query, $queryMapping);
 
-        $collectionProperties = $entityMetadata->getNestedPropertiesOf(CollectionField::class);
+            // VERY IMPORTANT
+            // without that the DistinctResultSetMapper will not work correctly
+            $qb->addOrderBy($idColumnName, Order::ASC);
+        }
 
         foreach ($collectionProperties as $collectionMetadata) {
             /** @var CollectionField $collectionFieldMetadata */
@@ -95,25 +135,36 @@ final class DistinctResultSetCriteriaQueryExecutor implements CriteriaQueryExecu
             );
         }
 
-        if ($criteriaQuery->getConditionalExpression()) {
+        if ($query->getConditionalExpression()) {
             $conditionVisitor = new DbalConditionalExpressionVisitor($qb, $entityMetadata, $queryMapping);
-            $conditionVisitor->visit($criteriaQuery->getConditionalExpression());
+            $conditionVisitor->visit($query->getConditionalExpression());
         }
 
-        foreach ($criteriaQuery->getOrderings() as $order) {
+        return $qb->execute();
+    }
+
+    private function applySelectColumns(QueryMapping $queryMapping, DbalQueryBuilder $qb): void
+    {
+        foreach ($queryMapping->getColumns() as $column) {
+            $qb->addSelect(sprintf('%s AS %s', $column->getQualifiedName(), $column->getResultName()));
+        }
+    }
+
+    private function applyOrderings(DbalQueryBuilder $qb, CriteriaQuery $query, QueryMapping $queryMapping): void
+    {
+        $entityMetadata = $query->getQueriedEntity();
+
+        foreach ($query->getOrderings() as $order) {
             $property = $entityMetadata->getProperty($order->getPropertyName());
-            $columnName = $queryMapping->getColumn($entityMetadata->getTableName(), $property->getField()->getColumnName());
+            $columnName = $queryMapping->getColumn($entityMetadata->getTableName(), $property->getField()->getColumnName())->getQualifiedName();
 
             $qb->addOrderBy($columnName, $order->getDirection());
         }
+    }
 
-        // VERY IMPORTANT!
-        // without that the result set will be returned
-        // in the unspecified order resulting entities with
-        // collections to be totally messed up
-        $qb->orderBy($idColumnName, Order::ASC);
-
-        return $qb;
+    private function getEntityIdColumnMapping(Entity $entityMetadata, QueryMapping $queryMapping): QueryColumnMapping
+    {
+        return $queryMapping->getColumn($entityMetadata->getTableName(), $entityMetadata->getIdProperty()->getField()->getColumnName());
     }
 
     private function getEntityQueryMapping(string $type): QueryMapping

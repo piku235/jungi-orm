@@ -27,7 +27,7 @@ final class InternalEntityManager
         $this->classMetadataFactory = $classMetadataFactory;
         $this->identityMap = new IdentityMap();
         $this->commitMap = new \SplObjectStorage();
-        $this->criteriaQueryExecutor = new DistinctResultSetCriteriaQueryExecutor($connection, $classMetadataFactory);
+        $this->criteriaQueryExecutor = new CriteriaQueryExecutor($connection, $classMetadataFactory);
         $this->objectMapper = new ObjectMapper($connection, $classMetadataFactory);
     }
 

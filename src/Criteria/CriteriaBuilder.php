@@ -18,12 +18,12 @@ final class CriteriaBuilder
 
     public function and($expression, ...$expressions): Composite
     {
-        return Composite::and(func_get_args());
+        return Composite::and(...func_get_args());
     }
 
     public function or($expression, ...$expressions): Composite
     {
-        return Composite::or(func_get_args());
+        return Composite::or(...func_get_args());
     }
 
     public function eq(string $propertyName, $value): Comparison

@@ -28,28 +28,28 @@ final class CriteriaBuilder
 
     public function eq(string $propertyName, $value): Comparison
     {
-        $this->assertPropertyIsEqualable($propertyName);
+        $this->assertPropertyForEquality($propertyName);
 
         return Comparison::eq($propertyName, $value);
     }
 
     public function neq(string $propertyName, $value): Comparison
     {
-        $this->assertPropertyIsEqualable($propertyName);
+        $this->assertPropertyForEquality($propertyName);
 
         return Comparison::neq($propertyName, $value);
     }
 
     public function isNull(string $propertyName): Comparison
     {
-        $this->entityMetadata->getProperty($propertyName);
+        $this->assertPropertyForNullability($propertyName);
 
         return Comparison::isNull($propertyName);
     }
 
     public function isNotNull(string $propertyName): Comparison
     {
-        $this->entityMetadata->getProperty($propertyName);
+        $this->assertPropertyForNullability($propertyName);
 
         return Comparison::isNotNull($propertyName);
     }
@@ -67,13 +67,25 @@ final class CriteriaBuilder
 
         return Order::desc($propertyName);
     }
-
-    private function assertPropertyIsEqualable(string $propertyName): void
+    
+    private function assertPropertyForEquality(string $propertyName): void
     {
         $property = $this->entityMetadata->getProperty($propertyName);
         if (!$property->isBasic()) {
             throw new \InvalidArgumentException(sprintf(
-                'Cannot use property "%s::%s" for equality, only basic properties can be used.',
+                'Cannot use property "%s::%s" for equality, only basic properties are supported.',
+                $this->entityMetadata->getClassName(),
+                $property->getName()
+            ));
+        }
+    }
+
+    private function assertPropertyForNullability(string $propertyName): void
+    {
+        $property = $this->entityMetadata->getProperty($propertyName);
+        if (!$property->isBasic() && (!$property->isEmbedded() || !$property->isNullable())) {
+            throw new \InvalidArgumentException(sprintf(
+                'Cannot use property "%s::%s" for nullability, only basic properties, embeddables are supported.',
                 $this->entityMetadata->getClassName(),
                 $property->getName()
             ));

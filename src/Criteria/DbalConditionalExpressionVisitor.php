@@ -2,8 +2,9 @@
 
 namespace Jungi\Orm\Criteria;
 
-use Doctrine\DBAL\Query\Expression\ExpressionBuilder;
+use Doctrine\DBAL\ParameterType;
 use Doctrine\DBAL\Query\QueryBuilder;
+use Jungi\Orm\Mapping\EmbeddedField;
 use Jungi\Orm\QueryMapping;
 use Jungi\Orm\Mapping\BasicField;
 use Jungi\Orm\Mapping\Entity;
@@ -43,32 +44,61 @@ final class DbalConditionalExpressionVisitor
 
     private function visitComparison(Comparison $expression): string
     {
-        static $comparisonOperatorMap = array(
-            Comparison::EQUALS => ExpressionBuilder::EQ,
-            Comparison::NOT_EQUALS => ExpressionBuilder::NEQ,
-        );
-
-        /** @var BasicField $fieldMetadata */
         $fieldMetadata = $this->entityMetadata->getProperty($expression->getPropertyName())->getField();
-        $columnName = $this->queryMapping->getColumn($this->entityMetadata->getTableName(), $fieldMetadata->getColumnName())->getQualifiedName();
-
-        if (isset($comparisonOperatorMap[$expression->getOperator()])) {
-            $comparedValue = $this->qb->createPositionalParameter(
-                $expression->getComparedValue(),
-                $fieldMetadata->getType()->getBindingType()
-            );
-
-            return $this->qb->expr()->comparison($columnName, $comparisonOperatorMap[$expression->getOperator()], $comparedValue);
-        }
 
         switch ($expression->getOperator()) {
-            case Comparison::IS:
-                return $this->qb->expr()->isNull($columnName);
-            case Comparison::IS_NOT:
-                return $this->qb->expr()->isNotNull($columnName);
-        }
+            case Comparison::EQUALS:
+            case Comparison::NOT_EQUALS:
+                if (!$fieldMetadata instanceof BasicField) {
+                    throw new \RuntimeException(sprintf('Expected to get basic field for comparison, got: "%s".', get_class($fieldMetadata)));
+                }
 
-        throw new \RuntimeException(sprintf('Unknown comparision operator "%s".', $expression->getOperator()));
+                $columnName = $this->queryMapping->getColumn(
+                    $this->entityMetadata->getTableName(),
+                    $fieldMetadata->getColumnName()
+                )->getQualifiedName();
+                $comparedValue = $this->qb->createPositionalParameter(
+                    $expression->getComparedValue(),
+                    $fieldMetadata->getType()->getBindingType()
+                );
+
+                return $this->qb->expr()->comparison($columnName, $expression->getOperator(), $comparedValue);
+            case Comparison::IS:
+            case Comparison::IS_NOT:
+                if (null !== $expression->getComparedValue()) {
+                    throw new \RuntimeException('Only IS [NOT] NULL comparisons are supported.');
+                }
+
+                if ($fieldMetadata instanceof EmbeddedField) {
+                    if (!$fieldMetadata->isNullable()) {
+                        throw new \LogicException('Embedded field should be nullable for IS [NOT] NULL comparison.');
+                    }
+
+                    $columnName = $this->queryMapping->getColumn(
+                        $this->entityMetadata->getTableName(),
+                        $fieldMetadata->getNullField()->getColumnName()
+                    )->getQualifiedName();
+                    $comparedValue = $this->qb->createPositionalParameter(
+                        Comparison::IS === $expression->getOperator(),
+                        ParameterType::BOOLEAN
+                    );
+
+                    return $this->qb->expr()->eq($columnName, $comparedValue);
+                }
+
+                if (!$fieldMetadata instanceof BasicField) {
+                    throw new \RuntimeException(sprintf('Expected to get basic field for IS [NOT] comparison, got: "%s".', get_class($fieldMetadata)));
+                }
+
+                $columnName = $this->queryMapping->getColumn(
+                    $this->entityMetadata->getTableName(),
+                    $fieldMetadata->getColumnName()
+                )->getQualifiedName();
+
+                return $this->qb->expr()->comparison($columnName, $expression->getOperator(), 'NULL');
+            default:
+                throw new \RuntimeException(sprintf('Unknown comparision operator "%s".', $expression->getOperator()));
+        }
     }
 
     private function visitComposite(Composite $expression): string

@@ -52,4 +52,9 @@ final class EntityManager
     {
         $this->iem->remove($entity);
     }
+
+    public function clear(): void
+    {
+        $this->iem->clear();
+    }
 }

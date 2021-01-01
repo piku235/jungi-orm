@@ -126,6 +126,12 @@ final class InternalEntityManager
         $this->identityMap->remove($type, $entityId);
     }
 
+    public function clear(): void
+    {
+        $this->identityMap = new IdentityMap();
+        $this->commitMap = new \SplObjectStorage();
+    }
+
     private function registerEntity(object $entity, string $state): void
     {
         $this->commitMap[$entity] = $state;

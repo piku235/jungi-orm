@@ -183,7 +183,7 @@ final class InternalEntityManager
         $idFieldMetadata = $entityMetadata->getIdProperty()->getField();
         $entityId = $idFieldMetadata->getType()->convertToDatabaseValue(
             $idMetadata->getValue($entity),
-            $this->connection
+            $this->connection->getDatabasePlatform()
         );
 
         $collectionProperties = $entityMetadata->getNestedPropertiesOf(CollectionField::class);
